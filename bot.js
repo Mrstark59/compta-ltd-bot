@@ -115,6 +115,9 @@ function parseFacture(embed) {
   };
 }
 
+// Items à ignorer complètement (trop nombreux, inutiles dans le stock)
+const IGNORE_ITEMS = ['bidon_fuel', 'dollar', 'dollars'];
+
 function parseInventory(embed) {
   const title = embed.title || '';
   const isAdd    = title === 'inventory - add';
@@ -413,7 +416,7 @@ async function handleMessage(message) {
           if (d) { d.msgId = message.id; saveStationFill(d); }
         } else if (t.includes('inventory')) {
           const d = parseInventory(embed);
-          if (d) { d.msgId = message.id; saveStockMouvement(d); }
+          if (d && !IGNORE_ITEMS.includes(d.item)) { d.msgId = message.id; saveStockMouvement(d); }
         }
         break;
       }
