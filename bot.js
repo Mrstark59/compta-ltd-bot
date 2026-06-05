@@ -442,8 +442,9 @@ client.once(Events.ClientReady, async () => {
   console.log(`   Logs-IG   : ${CHANNEL_LOGS_IG}`);
   console.log(`   Service   : ${CHANNEL_SERVICE}`);
   console.log(`\n📦 Stock : fire-and-forget activé`);
-  console.log(`\n🔄 Démarrage du backfill complet...\n`);
-  await backfillAll();
+  console.log(`\n✅ Bot prêt — écoute temps réel active`);
+  console.log(`   Backfill désactivé jusqu\'à reset quota Firebase (minuit)\n`);
+  // await backfillAll(); // Réactiver quand quota reset
 });
 
 client.on(Events.MessageCreate, async (msg) => {
@@ -456,6 +457,15 @@ client.on(Events.MessageUpdate, async (_old, newMsg) => {
   if (!newMsg.embeds?.length) return;
   if (newMsg.channelId !== CHANNEL_FACTURES) return;
   await handleMessage(newMsg);
+});
+
+// Empêche les erreurs non gérées de crasher le bot
+process.on('unhandledRejection', (err) => {
+  if (err?.details?.includes('Quota') || err?.message?.includes('Quota')) {
+    console.warn('⚠️  Firebase quota dépassé — pause du backfill');
+  } else {
+    console.error('❌ Erreur non gérée:', err?.message || err);
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN).catch(err => {
