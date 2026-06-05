@@ -220,9 +220,16 @@ async function saveService(data) {
     await db.collection('services').add({ employeNom: data.employeNom, debut: now(), fin: null, duree: null });
     console.log(`✅ Service début : ${data.employeNom}`);
   } else {
-    const snap = await db.collection('services').where('employeNom','==',data.employeNom).where('fin','==',null).orderBy('debut','desc').limit(1).get();
+    // Sans orderBy pour éviter l'index composite Firestore
+    const snap = await db.collection('services').where('employeNom','==',data.employeNom).where('fin','==',null).limit(5).get();
     if (!snap.empty) {
-      const doc = snap.docs[0];
+      // Prend le plus récent (tri en mémoire)
+      const sorted = snap.docs.sort((a,b)=>{
+        const ta = a.data().debut?.toDate?.()?.getTime()||0;
+        const tb = b.data().debut?.toDate?.()?.getTime()||0;
+        return tb-ta;
+      });
+      const doc = sorted[0];
       const debut = doc.data().debut?.toDate?.() || new Date();
       const duree = Math.round((new Date() - debut) / 60000);
       await doc.ref.update({ fin: admin.firestore.FieldValue.serverTimestamp(), duree });
