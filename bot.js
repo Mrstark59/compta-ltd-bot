@@ -298,6 +298,111 @@ async function handleMessage(message) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// BACKFILL HISTORIQUE #SERVICE
+// ══════════════════════════════════════════════════════════════
+async function backfillServices(channel) {
+  console.log('\n📚 Backfill #service — lecture de l\'historique...');
+  
+  // Récupère tous les messages (max 5000, par tranches de 100)
+  let allMessages = [];
+  let lastId = null;
+  let fetched = 0;
+  
+  while (fetched < 5000) {
+    const opts = { limit: 100 };
+    if (lastId) opts.before = lastId;
+    
+    const batch = await channel.messages.fetch(opts);
+    if (!batch.size) break;
+    
+    allMessages.push(...batch.values());
+    lastId = batch.last()?.id;
+    fetched += batch.size;
+    if (batch.size < 100) break;
+  }
+  
+  console.log(`   → ${allMessages.length} messages récupérés`);
+  
+  // Trie du plus ancien au plus récent
+  allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  
+  // Parse tous les messages de service
+  const events = [];
+  for (const msg of allMessages) {
+    if (!msg.embeds?.length) continue;
+    const embed = msg.embeds[0];
+    const title = (embed.title || '').replace(/[*_~`]/g, '').toLowerCase().trim();
+    if (!title.includes('commenc') && !title.includes('termin')) continue;
+    
+    let text = embed.description || '';
+    if (embed.fields?.length) {
+      for (const f of embed.fields) text += `\n${f.name}: ${f.value}`;
+    }
+    const m = text.match(/^(.+?)\s+a\s+(commenc|termin)/i);
+    if (!m) continue;
+    
+    events.push({
+      action: title.includes('commenc') ? 'debut' : 'fin',
+      employeNom: m[1].trim(),
+      timestamp: msg.createdAt,
+      msgId: msg.id,
+    });
+  }
+  
+  console.log(`   → ${events.length} événements de service parsés`);
+  
+  // Vérifie les services déjà en base (par msgId)
+  const existing = await db.collection('services')
+    .where('source', '==', 'discord').get();
+  const existingMsgIds = new Set(existing.docs.map(d => d.data().msgId).filter(Boolean));
+  
+  // Reconstitue les paires début/fin
+  const openSessions = {}; // nom -> {timestamp, msgId}
+  let saved = 0;
+  
+  for (const ev of events) {
+    if (ev.action === 'debut') {
+      openSessions[ev.employeNom] = { timestamp: ev.timestamp, msgId: ev.msgId };
+    } else if (ev.action === 'fin' && openSessions[ev.employeNom]) {
+      const debut = openSessions[ev.employeNom];
+      delete openSessions[ev.employeNom];
+      
+      // Evite les doublons
+      if (existingMsgIds.has(debut.msgId)) continue;
+      
+      const duree = Math.round((ev.timestamp - debut.timestamp) / 60000);
+      if (duree < 0 || duree > 1440) continue; // sanity check (max 24h)
+      
+      await db.collection('services').add({
+        employeNom: ev.employeNom,
+        debut: admin.firestore.Timestamp.fromDate(debut.timestamp),
+        fin: admin.firestore.Timestamp.fromDate(ev.timestamp),
+        duree,
+        source: 'discord',
+        msgId: debut.msgId,
+      });
+      saved++;
+    }
+  }
+  
+  // Sessions encore ouvertes (service commencé sans fin)
+  for (const [nom, session] of Object.entries(openSessions)) {
+    if (!existingMsgIds.has(session.msgId)) {
+      await db.collection('services').add({
+        employeNom: nom,
+        debut: admin.firestore.Timestamp.fromDate(session.timestamp),
+        fin: null,
+        duree: null,
+        source: 'discord',
+        msgId: session.msgId,
+      });
+    }
+  }
+  
+  console.log(`   ✅ ${saved} sessions de service sauvegardées`);
+}
+
+// ══════════════════════════════════════════════════════════════
 // EVENTS DISCORD
 // ══════════════════════════════════════════════════════════════
 client.once(Events.ClientReady, async () => {
@@ -359,6 +464,16 @@ client.once(Events.ClientReady, async () => {
     }
   }
   console.log('');
+
+  // Backfill historique #service
+  if (CHANNEL_SERVICE) {
+    try {
+      const svcChannel = await client.channels.fetch(CHANNEL_SERVICE);
+      if (svcChannel) await backfillServices(svcChannel);
+    } catch(e) {
+      console.log(`⚠️  Backfill service ignoré : ${e.message}`);
+    }
+  }
 });
 
 client.on(Events.MessageCreate, async (msg) => {
