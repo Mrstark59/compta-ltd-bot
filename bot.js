@@ -459,7 +459,7 @@ client.once(Events.ClientReady, async () => {
   // ══ BACKFILL ══
   // Décommenter la ligne ci-dessous pour relancer le backfill historique
   // (attendre reset quota Firebase : chaque jour à minuit UTC / ~2h Paris)
-  // await backfillAll();
+  await backfillAll();
 });
 
 client.on(Events.MessageCreate, async (msg) => {
