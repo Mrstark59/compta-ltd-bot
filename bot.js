@@ -2,9 +2,6 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const admin = require('firebase-admin');
 
-// ══════════════════════════════════════════════════════════════
-// FIREBASE INIT
-// ══════════════════════════════════════════════════════════════
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId:   process.env.FIREBASE_PROJECT_ID,
@@ -14,9 +11,6 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
-// ══════════════════════════════════════════════════════════════
-// DISCORD CLIENT
-// ══════════════════════════════════════════════════════════════
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -25,21 +19,14 @@ const client = new Client({
   ],
 });
 
-// ══════════════════════════════════════════════════════════════
-// CONFIG CHANNELS
-// ══════════════════════════════════════════════════════════════
 const CHANNEL_REVENUE  = process.env.CHANNEL_REVENUE;
 const CHANNEL_DEPENSES = process.env.CHANNEL_DEPENSES;
 const CHANNEL_FACTURES = process.env.CHANNEL_FACTURES;
 const CHANNEL_LOGS_IG  = process.env.CHANNEL_LOGS_IG;
 const CHANNEL_SERVICE  = process.env.CHANNEL_SERVICE;
 
-// Items à ignorer dans le stock (trop nombreux / suivis ailleurs)
 const IGNORE_ITEMS = ['bidon_fuel', 'dollar', 'dollars'];
 
-// ══════════════════════════════════════════════════════════════
-// HELPERS
-// ══════════════════════════════════════════════════════════════
 function extract(text, ...labels) {
   if (!text) return null;
   const clean = text.replace(/\*+|_+|~+|`+/g, '');
@@ -67,18 +54,15 @@ function parseKeyValues(description) {
 
 const now = () => admin.firestore.FieldValue.serverTimestamp();
 
-// ══════════════════════════════════════════════════════════════
-// PARSERS
-// ══════════════════════════════════════════════════════════════
 function parseTransaction(embed, forceType) {
   let desc = embed.description || '';
   if (embed.fields?.length) for (const f of embed.fields) desc += `\n${f.name}: ${f.value}`;
-  const montant    = parseMontant(extract(desc, 'Montant'));
-  const raison     = extract(desc, 'Raison');
-  const payeur     = extract(desc, 'Payeur');
+  const montant     = parseMontant(extract(desc, 'Montant'));
+  const raison      = extract(desc, 'Raison');
+  const payeur      = extract(desc, 'Payeur');
   const utilisateur = extract(desc, 'Utilisateur');
-  const soldeAvant = parseMontant(extract(desc, 'Solde avant'));
-  const soldeApres = parseMontant(extract(desc, 'Solde après', 'Solde apres'));
+  const soldeAvant  = parseMontant(extract(desc, 'Solde avant'));
+  const soldeApres  = parseMontant(extract(desc, 'Solde après', 'Solde apres'));
   if (!montant) return null;
   let categorie = 'autre';
   if (raison) {
@@ -163,9 +147,6 @@ function parseService(embed) {
   return { action: isDebut ? 'debut' : 'fin', employeNom: nom };
 }
 
-// ══════════════════════════════════════════════════════════════
-// SAUVEGARDE
-// ══════════════════════════════════════════════════════════════
 async function saveTransaction(data) {
   await db.collection('transactions').add(data);
   console.log(`✅ Transaction [${data.type}] ${data.montant}$ — ${data.categorie}`);
@@ -191,20 +172,50 @@ function saveStationFill(data) {
 
 async function saveService(data) {
   if (data.action === 'debut') {
-    await db.collection('services').add({ employeNom: data.employeNom, debut: now(), fin: null, duree: null });
+    // Vérifier s'il y a déjà un service ouvert pour cet employé (sécurité doublon)
+    const existing = await db.collection('services')
+      .where('employeNom', '==', data.employeNom)
+      .orderBy('debut', 'desc')
+      .limit(1)
+      .get();
+    if (!existing.empty) {
+      const last = existing.docs[0].data();
+      // Si le dernier service n'a pas de fin (null ou undefined ou absent), on ne recrée pas
+      const hasFin = last.fin !== null && last.fin !== undefined;
+      if (!hasFin) {
+        console.log(`⚠️  Service déjà ouvert pour ${data.employeNom} — ignoré`);
+        return;
+      }
+    }
+    await db.collection('services').add({
+      employeNom: data.employeNom,
+      debut: now(),
+      fin: null,
+      duree: null,
+    });
     console.log(`✅ Service début : ${data.employeNom}`);
   } else {
-    const snap = await db.collection('services').where('employeNom', '==', data.employeNom).limit(10).get();
-    const openDocs = snap.docs.filter(d => d.data().fin === null).sort((a, b) => {
-      const ta = a.data().debut?.toDate?.()?.getTime() || 0;
-      const tb = b.data().debut?.toDate?.()?.getTime() || 0;
-      return tb - ta;
+    // Chercher le dernier service ouvert (fin null OU fin absente)
+    const snap = await db.collection('services')
+      .where('employeNom', '==', data.employeNom)
+      .orderBy('debut', 'desc')
+      .limit(10)
+      .get();
+
+    // Considérer comme "ouvert" : fin === null OU fin === undefined OU champ absent
+    const openDocs = snap.docs.filter(d => {
+      const fin = d.data().fin;
+      return fin === null || fin === undefined;
     });
+
     if (openDocs.length > 0) {
-      const doc   = openDocs[0];
+      const doc   = openDocs[0]; // le plus récent (déjà trié desc)
       const debut = doc.data().debut?.toDate?.() || new Date();
       const duree = Math.round((new Date() - debut) / 60000);
-      await doc.ref.update({ fin: admin.firestore.FieldValue.serverTimestamp(), duree });
+      await doc.ref.update({
+        fin: admin.firestore.FieldValue.serverTimestamp(),
+        duree,
+      });
       console.log(`✅ Service fin : ${data.employeNom} (${duree} min)`);
     } else {
       console.log(`⚠️  Pas de service ouvert pour ${data.employeNom}`);
@@ -212,9 +223,6 @@ async function saveService(data) {
   }
 }
 
-// ══════════════════════════════════════════════════════════════
-// FETCH HISTORIQUE
-// ══════════════════════════════════════════════════════════════
 async function fetchAllMessages(channel, maxMessages = 10000) {
   const all = [];
   let lastId = null;
@@ -237,9 +245,6 @@ async function getExistingMsgIds(collectionName) {
   } catch { return new Set(); }
 }
 
-// ══════════════════════════════════════════════════════════════
-// BACKFILL GÉNÉRAL
-// ══════════════════════════════════════════════════════════════
 async function backfillAll() {
   console.log('\n📚 Récupération des msgIds existants...');
   const existingTx  = await getExistingMsgIds('transactions');
@@ -248,7 +253,6 @@ async function backfillAll() {
   const existingSta = await getExistingMsgIds('station_fills');
   console.log(`   TX:${existingTx.size} FAC:${existingFac.size} STK:${existingStk.size} STA:${existingSta.size}\n`);
 
-  // Helper pour backfill un channel
   async function backfill(channelId, label, processFn) {
     try {
       const ch = await client.channels.fetch(channelId);
@@ -280,7 +284,6 @@ async function backfillAll() {
     }
   }
 
-  // REVENUE
   await backfill(CHANNEL_REVENUE, '#revenue', async (msg) => {
     if (existingTx.has(msg.id)) return false;
     const ct = (msg.embeds[0].title||'').replace(/[*_~`]/g,'').toUpperCase();
@@ -293,7 +296,6 @@ async function backfillAll() {
     return true;
   });
 
-  // DEPENSES
   await backfill(CHANNEL_DEPENSES, '#dépenses', async (msg) => {
     if (existingTx.has(msg.id)) return false;
     const ct = (msg.embeds[0].title||'').replace(/[*_~`]/g,'').toUpperCase();
@@ -306,7 +308,6 @@ async function backfillAll() {
     return true;
   });
 
-  // FACTURES
   await backfill(CHANNEL_FACTURES, '#factures', async (msg) => {
     if (existingFac.has(msg.id)) return false;
     const title = (msg.embeds[0].title||'').replace(/[*_~`]/g,'');
@@ -319,10 +320,8 @@ async function backfillAll() {
     return true;
   });
 
-  // LOGS IG — seulement les 14 derniers jours (stock + stations, sans bidon_fuel)
   const cutoff14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
   await backfill(CHANNEL_LOGS_IG, '#logs-ig (14j)', async (msg) => {
-    // Ignorer les messages plus vieux que 14 jours
     if (msg.createdAt < cutoff14) return false;
     const t = (msg.embeds[0].title||'').toLowerCase();
     if (t.includes('station_fill')) {
@@ -345,9 +344,7 @@ async function backfillAll() {
     return false;
   });
 
-  // SERVICE
   await backfillServices();
-
   console.log('\n✅ Backfill complet !\n');
 }
 
@@ -382,7 +379,14 @@ async function backfillServices() {
         if (existingIds.has(debut.msgId)) continue;
         const duree = Math.round((ev.timestamp - debut.timestamp) / 60000);
         if (duree < 0 || duree > 1440) continue;
-        await db.collection('services').add({ employeNom: ev.employeNom, debut: admin.firestore.Timestamp.fromDate(debut.timestamp), fin: admin.firestore.Timestamp.fromDate(ev.timestamp), duree, source: 'discord', msgId: debut.msgId });
+        await db.collection('services').add({
+          employeNom: ev.employeNom,
+          debut: admin.firestore.Timestamp.fromDate(debut.timestamp),
+          fin: admin.firestore.Timestamp.fromDate(ev.timestamp),
+          duree,
+          source: 'discord',
+          msgId: debut.msgId,
+        });
         existingIds.add(debut.msgId);
         saved++;
       }
@@ -397,9 +401,6 @@ async function backfillServices() {
   }
 }
 
-// ══════════════════════════════════════════════════════════════
-// MESSAGE HANDLER (temps réel)
-// ══════════════════════════════════════════════════════════════
 async function handleMessage(message) {
   if (!message.embeds?.length) return;
   const embed = message.embeds[0];
@@ -446,9 +447,6 @@ async function handleMessage(message) {
   }
 }
 
-// ══════════════════════════════════════════════════════════════
-// EVENTS DISCORD
-// ══════════════════════════════════════════════════════════════
 client.once(Events.ClientReady, async () => {
   console.log(`\n🟢 Bot connecté : ${client.user.tag}`);
   console.log(`   Revenue   : ${CHANNEL_REVENUE}`);
@@ -459,10 +457,8 @@ client.once(Events.ClientReady, async () => {
   console.log(`   Ignorés   : ${IGNORE_ITEMS.join(', ')}`);
   console.log(`\n✅ Bot prêt — écoute temps réel active`);
 
-  // ══ BACKFILL ══
-  // Décommenter la ligne ci-dessous pour relancer le backfill historique
-  // (attendre reset quota Firebase : chaque jour à minuit UTC / ~2h Paris)
-  await backfillAll();
+  // Décommenter pour relancer le backfill (après reset quota 2h Paris)
+  // await backfillAll();
 });
 
 client.on(Events.MessageCreate, async (msg) => {
@@ -477,7 +473,6 @@ client.on(Events.MessageUpdate, async (_old, newMsg) => {
   await handleMessage(newMsg);
 });
 
-// ══ GESTION ERREURS ══
 process.on('unhandledRejection', (err) => {
   if (err?.details?.includes('Quota') || err?.message?.includes('Quota')) {
     console.warn('⚠️  Firebase quota dépassé — données non sauvegardées temporairement');
