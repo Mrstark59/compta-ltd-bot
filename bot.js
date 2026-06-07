@@ -175,11 +175,16 @@ async function saveService(data) {
     // Vérifier s'il y a déjà un service ouvert pour cet employé (sécurité doublon)
     const existing = await db.collection('services')
       .where('employeNom', '==', data.employeNom)
-      .orderBy('debut', 'desc')
-      .limit(1)
+      .limit(10)
       .get();
     if (!existing.empty) {
-      const last = existing.docs[0].data();
+      // Trier pour avoir le plus récent en premier
+      const sorted = existing.docs.sort((a, b) => {
+        const ta = a.data().debut?.toDate?.()?.getTime() || 0;
+        const tb = b.data().debut?.toDate?.()?.getTime() || 0;
+        return tb - ta;
+      });
+      const last = sorted[0].data();
       // Si le dernier service n'a pas de fin (null ou undefined ou absent), on ne recrée pas
       const hasFin = last.fin !== null && last.fin !== undefined;
       if (!hasFin) {
@@ -198,18 +203,23 @@ async function saveService(data) {
     // Chercher le dernier service ouvert (fin null OU fin absente)
     const snap = await db.collection('services')
       .where('employeNom', '==', data.employeNom)
-      .orderBy('debut', 'desc')
-      .limit(10)
+      .limit(20)
       .get();
 
     // Considérer comme "ouvert" : fin === null OU fin === undefined OU champ absent
-    const openDocs = snap.docs.filter(d => {
-      const fin = d.data().fin;
-      return fin === null || fin === undefined;
-    });
+    const openDocs = snap.docs
+      .filter(d => {
+        const fin = d.data().fin;
+        return fin === null || fin === undefined;
+      })
+      .sort((a, b) => {
+        const ta = a.data().debut?.toDate?.()?.getTime() || 0;
+        const tb = b.data().debut?.toDate?.()?.getTime() || 0;
+        return tb - ta; // plus récent en premier
+      });
 
     if (openDocs.length > 0) {
-      const doc   = openDocs[0]; // le plus récent (déjà trié desc)
+      const doc = openDocs[0]; // le plus récent
       const debut = doc.data().debut?.toDate?.() || new Date();
       const duree = Math.round((new Date() - debut) / 60000);
       await doc.ref.update({
