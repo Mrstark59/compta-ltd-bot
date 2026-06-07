@@ -319,8 +319,11 @@ async function backfillAll() {
     return true;
   });
 
-  // LOGS IG (stock + stations, sans bidon_fuel)
-  await backfill(CHANNEL_LOGS_IG, '#logs-ig', async (msg) => {
+  // LOGS IG — seulement les 14 derniers jours (stock + stations, sans bidon_fuel)
+  const cutoff14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  await backfill(CHANNEL_LOGS_IG, '#logs-ig (14j)', async (msg) => {
+    // Ignorer les messages plus vieux que 14 jours
+    if (msg.createdAt < cutoff14) return false;
     const t = (msg.embeds[0].title||'').toLowerCase();
     if (t.includes('station_fill')) {
       if (existingSta.has(msg.id)) return false;
@@ -333,7 +336,7 @@ async function backfillAll() {
     } else if (t.includes('inventory')) {
       if (existingStk.has(msg.id)) return false;
       const d = parseInventory(msg.embeds[0]);
-      if (!d) return false; // bidon_fuel déjà filtré dans parseInventory
+      if (!d) return false;
       d.msgId = msg.id; d.timestamp = admin.firestore.Timestamp.fromDate(msg.createdAt);
       db.collection('stock_mouvements').add(d).catch(() => {});
       existingStk.add(msg.id);
