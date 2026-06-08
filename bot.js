@@ -138,11 +138,22 @@ function parseService(embed) {
   const title = (embed.title || '').replace(/[*_~`]/g, '').toLowerCase().trim();
   const isDebut = title.includes('commenc');
   const isFin   = title.includes('termin');
+  console.log(`[parseService] title="${title}" isDebut=${isDebut} isFin=${isFin}`);
   if (!isDebut && !isFin) return null;
   let text = embed.description || '';
   if (embed.fields?.length) for (const f of embed.fields) text += `\n${f.name}: ${f.value}`;
-  const m = text.match(/^(.+?)\s+a\s+(commenc|termin)/i);
-  const nom = m ? m[1].trim() : null;
+  console.log(`[parseService] text="${text.replace(/\n/g, '|')}"`);
+  // Essayer plusieurs patterns
+  let nom = null;
+  const patterns = [
+    /^(.+?)\s+a\s+(commenc|termin)/i,
+    /(.+?)\s+a\s+(commenc|termin)/i,
+  ];
+  for (const pat of patterns) {
+    const m = text.match(pat);
+    if (m) { nom = m[1].replace(/\*+/g, '').trim(); break; }
+  }
+  console.log(`[parseService] nom trouvé="${nom}"`);
   if (!nom) return null;
   return { action: isDebut ? 'debut' : 'fin', employeNom: nom };
 }
