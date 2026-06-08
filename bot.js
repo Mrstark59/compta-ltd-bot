@@ -468,6 +468,16 @@ async function handleMessage(message) {
   }
 }
 
+async function deleteCollection(collRef, batchSize=100) {
+  const snap = await collRef.limit(batchSize).get();
+  if (snap.empty) return 0;
+  const batch = db.batch();
+  snap.docs.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+  console.log(`   🗑️ ${snap.size} docs supprimés...`);
+  return snap.size + await deleteCollection(collRef, batchSize);
+}
+
 client.once(Events.ClientReady, async () => {
   console.log(`\n🟢 Bot connecté : ${client.user.tag}`);
   console.log(`   Revenue   : ${CHANNEL_REVENUE}`);
@@ -477,6 +487,12 @@ client.once(Events.ClientReady, async () => {
   console.log(`   Service   : ${CHANNEL_SERVICE}`);
   console.log(`   Ignorés   : ${IGNORE_ITEMS.join(', ')}`);
   console.log(`\n✅ Bot prêt — écoute temps réel active`);
+
+  // ══ VIDER COLLECTION SERVICES (une seule fois) ══
+  // Décommenter, déployer, puis recommenter et redéployer
+   console.log('🗑️ Vidage services...');
+   await deleteCollection(db.collection('services'));
+   console.log('✅ Services vidés !');
 
   // Décommenter pour relancer le backfill (après reset quota 2h Paris)
   // await backfillAll();
