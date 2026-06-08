@@ -138,11 +138,10 @@ function parseService(embed) {
   const title = (embed.title || '').replace(/[*_~`]/g, '').toLowerCase().trim();
   const isDebut = title.includes('commenc');
   const isFin   = title.includes('termin');
-  console.log(`[parseService] title="${title}" isDebut=${isDebut} isFin=${isFin}`);
+
   if (!isDebut && !isFin) return null;
   let text = embed.description || '';
   if (embed.fields?.length) for (const f of embed.fields) text += `\n${f.name}: ${f.value}`;
-  console.log(`[parseService] text="${text.replace(/\n/g, '|')}"`);
   // Essayer plusieurs patterns
   let nom = null;
   const patterns = [
@@ -153,7 +152,6 @@ function parseService(embed) {
     const m = text.match(pat);
     if (m) { nom = m[1].replace(/\*+/g, '').trim(); break; }
   }
-  console.log(`[parseService] nom trouvé="${nom}"`);
   if (!nom) return null;
   return { action: isDebut ? 'debut' : 'fin', employeNom: nom };
 }
@@ -468,16 +466,6 @@ async function handleMessage(message) {
   }
 }
 
-async function deleteCollection(collRef, batchSize=100) {
-  const snap = await collRef.limit(batchSize).get();
-  if (snap.empty) return 0;
-  const batch = db.batch();
-  snap.docs.forEach(d => batch.delete(d.ref));
-  await batch.commit();
-  console.log(`   🗑️ ${snap.size} docs supprimés...`);
-  return snap.size + await deleteCollection(collRef, batchSize);
-}
-
 client.once(Events.ClientReady, async () => {
   console.log(`\n🟢 Bot connecté : ${client.user.tag}`);
   console.log(`   Revenue   : ${CHANNEL_REVENUE}`);
@@ -487,12 +475,6 @@ client.once(Events.ClientReady, async () => {
   console.log(`   Service   : ${CHANNEL_SERVICE}`);
   console.log(`   Ignorés   : ${IGNORE_ITEMS.join(', ')}`);
   console.log(`\n✅ Bot prêt — écoute temps réel active`);
-
-  // ══ VIDER COLLECTION SERVICES (une seule fois) ══
-  // Décommenter, déployer, puis recommenter et redéployer
-   console.log('🗑️ Vidage services...');
-   await deleteCollection(db.collection('services'));
-   console.log('✅ Services vidés !');
 
   // Décommenter pour relancer le backfill (après reset quota 2h Paris)
   // await backfillAll();
