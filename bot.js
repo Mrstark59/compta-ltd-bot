@@ -197,6 +197,7 @@ async function handleMessage(message) {
   const title = (embed.title || '').toLowerCase().trim();
   const msgId = message.id;
 
+  console.log(`📨 Embed reçu : "${embed.title}" (channel: ${message.channelId})`);
   try {
     if (title === 'xbankaccount - paid') {
       await handlePaid(embed, msgId);
@@ -283,10 +284,30 @@ async function backfillAll() {
 
 // ─── Events Discord ───────────────────────────────────────────────────────────
 
+async function clearServices() {
+  console.log('🗑️  Nettoyage collection services...');
+  let total = 0;
+  let snap;
+  do {
+    snap = await db.collection('services').limit(200).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    total += snap.size;
+    console.log(`   ${total} docs supprimés...`);
+  } while (snap.size > 0);
+  console.log(`✅ Services vidés (${total} docs)`);
+}
+
 client.once(Events.ClientReady, async () => {
   console.log(`\n🟢 Bot connecté : ${client.user.tag}`);
   console.log(`   Logs-IG : ${CHANNEL_LOGS_IG}`);
   console.log(`\n✅ Bot prêt — écoute temps réel active`);
+
+  // Vider les services orphelins au démarrage (une seule fois)
+  await clearServices();
+
   // await backfillAll();
 });
 
