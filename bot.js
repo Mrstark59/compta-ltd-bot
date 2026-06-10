@@ -94,6 +94,8 @@ async function handleAddmoney(embed, msgId) {
   const iban   = (d.iban || '').toUpperCase();
   // Ignorer si c'est pas le compte LTD
   if (iban && !iban.includes('LTD')) return;
+  // Ignorer si c'est un paiement de facture (déjà géré par handlePaid)
+  if (raison.toLowerCase().includes('paiement facture')) return;
   let categorie = 'autre';
   if (raison.toLowerCase().includes('redistribution')) categorie = 'essence';
   else if (raison.toLowerCase().includes('salaire'))   categorie = 'salaire';
@@ -118,18 +120,16 @@ async function handleWithdraw(embed, msgId) {
   const iban = (d.iban || '').toUpperCase();
   if (iban && !iban.includes('LTD')) return;
   const raison = d.reason || '';
-  let categorie = 'autre';
-  if (raison.toLowerCase().includes('salaire'))                       categorie = 'salaire';
-  else if (raison.toLowerCase().includes('loyer') ||
-           raison.toLowerCase().includes('location'))                 categorie = 'loyer';
-  else if (raison.toLowerCase().includes('achat') ||
-           raison.toLowerCase().includes('appro'))                    categorie = 'approvisionnement';
+  let categorie = 'approvisionnement'; // withdraw = achat/dépense par défaut
+  const r = raison.toLowerCase();
+  if      (r.includes('salaire'))                          categorie = 'salaire';
+  else if (r.includes('loyer') || r.includes('location')) categorie = 'loyer';
   await db.collection('transactions').add({
     type: 'sortie',
     montant,
     categorie,
     raison,
-    personne: d.topropername || d.toname || 'Inconnu',
+    personne: d.propername || d.properName || d.topropername || d.toname || 'Inconnu',
     soldeAvant: parseMontant(d.before),
     soldeApres: parseMontant(d.after),
     msgId,
